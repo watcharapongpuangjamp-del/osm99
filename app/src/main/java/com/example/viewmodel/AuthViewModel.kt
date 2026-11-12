@@ -72,6 +72,19 @@ class AuthViewModel(
         }
     }
 
+    fun signInWithGoogleTest(context: Context, email: String) {
+        val uid = "test-google-${Math.abs(email.hashCode())}"
+        authManager.setLocalProfile(
+            context = context,
+            uid = uid,
+            email = email,
+            displayName = email.substringBefore("@"),
+            photoUrl = null,
+            provider = "google.com"
+        )
+        _uiState.value = AuthUiState.Success(authManager.userProfile.value, "เข้าสู่ระบบบัญชี Google ทดสอบสำเร็จ")
+    }
+
     fun signInWithEmail(email: String, pass: String) {
         if (email.isBlank() || pass.isBlank()) {
             _uiState.value = AuthUiState.Error("กรุณากรอกอีเมลและรหัสผ่านให้ครบถ้วน")

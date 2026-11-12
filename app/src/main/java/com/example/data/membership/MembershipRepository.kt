@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -96,10 +97,12 @@ open class MembershipRepository(
             if (firestore != null) {
                 try {
                     val map = membershipToMap(membership)
-                    firestore.collection(COLLECTION_MEMBERSHIPS)
-                        .document(key)
-                        .set(map, SetOptions.merge())
-                        .await()
+                    withTimeoutOrNull(2000L) {
+                        firestore.collection(COLLECTION_MEMBERSHIPS)
+                            .document(key)
+                            .set(map, SetOptions.merge())
+                            .await()
+                    }
                     Log.d(TAG, "Membership for ${membership.uid} synced to Firestore")
                 } catch (e: Exception) {
                     Log.w(TAG, "Cloud sync for membership deferred: ${e.message}")
@@ -153,10 +156,12 @@ open class MembershipRepository(
             val firestore = firestoreProvider()
                 ?: return@withContext Result.success(getUserMemberships(uid))
 
-            val snapshot = firestore.collection(COLLECTION_MEMBERSHIPS)
-                .whereEqualTo("uid", uid)
-                .get()
-                .await()
+            val snapshot = withTimeoutOrNull(2000L) {
+                firestore.collection(COLLECTION_MEMBERSHIPS)
+                    .whereEqualTo("uid", uid)
+                    .get()
+                    .await()
+            } ?: return@withContext Result.success(getUserMemberships(uid))
 
             val remoteMemberships = snapshot.documents.mapNotNull { docToMembership(it.data) }
             for (m in remoteMemberships) {

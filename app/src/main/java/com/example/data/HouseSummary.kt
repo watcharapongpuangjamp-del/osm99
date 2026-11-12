@@ -19,5 +19,8 @@ data class HouseSummary(
     val longitude: Double?,
     val dataStatus: DataStatus = DataStatus.NEEDS_REVIEW,
     val headName: String? = null
-)
+) {
+    val children: Int
+        get() = earlyChild + schoolAge
+}
 

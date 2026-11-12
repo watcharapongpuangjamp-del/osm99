@@ -33,7 +33,7 @@ class DiagnosticViewModel(
 
     fun runDiagnostic(context: Context) {
         if (firestore == null) {
-            _state.value = _state.value.copy(error = "ระบบ Cloud (Firebase) ยังไม่ได้เชื่อมต่อในระบบนี้ (ใช้งานฐานข้อมูลภายใน Room ได้ปกติ)")
+            _state.value = _state.value.copy(error = "Firebase is not configured.")
             return
         }
 

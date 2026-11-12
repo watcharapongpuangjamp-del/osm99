@@ -161,7 +161,7 @@ class IdentityAndMembershipArchitectureTest {
     fun test4_membershipAndPermissionHierarchy() = runBlocking {
         val userUid = "vhv_officer_somchai"
         val villageId = "village_nayok_m8"
-        val repo = MembershipRepository(context)
+        val repo = MembershipRepository(context, firestoreProvider = { null })
 
         val membership = UserMembership(
             uid = userUid,

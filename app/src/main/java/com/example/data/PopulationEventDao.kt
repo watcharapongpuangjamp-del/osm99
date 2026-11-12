@@ -16,6 +16,9 @@ interface PopulationEventDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEvent(event: PopulationEvent): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(event: PopulationEvent): Long
+
     @Update
     suspend fun updateEvent(event: PopulationEvent)
 
