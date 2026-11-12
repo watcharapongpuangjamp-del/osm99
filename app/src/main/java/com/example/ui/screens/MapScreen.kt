@@ -46,10 +46,18 @@ import com.example.data.sync.SyncState
 import com.example.ui.theme.*
 import com.example.ui.components.IdCardScannerDialog
 import com.example.viewmodel.PersonViewModel
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.Looper
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
+import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.osmdroid.config.Configuration
@@ -84,7 +92,75 @@ fun MapScreen(
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
 
     val locationPermissionState = rememberPermissionState(permission = Manifest.permission.ACCESS_FINE_LOCATION)
+    val locationPermissionsState = rememberMultiplePermissionsState(
+        permissions = listOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    )
+    val hasLocationPermission = locationPermissionsState.allPermissionsGranted ||
+            locationPermissionsState.permissions.any { it.status.isGranted } ||
+            locationPermissionState.status.isGranted
+
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+
+    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
+    var currentUserLocation by remember { mutableStateOf<GeoPoint?>(null) }
+
+    // Real-time GPS Tracking telemetry states
+    var isRealtimeTrackingActive by remember { mutableStateOf(false) }
+    var isAutoFollowUser by remember { mutableStateOf(true) }
+    var showRealtimeHud by remember { mutableStateOf(false) }
+    var realtimeLocationInfo by remember { mutableStateOf<RealtimeLocationDetails?>(null) }
+
+    // Continuous Real-Time Location Updates via Google Play Services Location Provider
+    DisposableEffect(isRealtimeTrackingActive, hasLocationPermission) {
+        if (isRealtimeTrackingActive && hasLocationPermission) {
+            val locationRequest = LocationRequest.Builder(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                2000L
+            ).setMinUpdateIntervalMillis(1000L)
+                .setMinUpdateDistanceMeters(1.0f)
+                .build()
+
+            val locationCallback = object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val location = result.lastLocation ?: return
+                    val geoPoint = GeoPoint(location.latitude, location.longitude)
+                    currentUserLocation = geoPoint
+                    realtimeLocationInfo = RealtimeLocationDetails(
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        accuracy = location.accuracy,
+                        altitude = if (location.hasAltitude()) location.altitude else null,
+                        speedKmh = if (location.hasSpeed()) location.speed * 3.6f else null,
+                        bearing = if (location.hasBearing()) location.bearing else null,
+                        timestamp = location.time
+                    )
+                    if (isAutoFollowUser) {
+                        mapViewRef?.controller?.animateTo(geoPoint)
+                    }
+                }
+            }
+
+            try {
+                @SuppressLint("MissingPermission")
+                fusedLocationClient.requestLocationUpdates(
+                    locationRequest,
+                    locationCallback,
+                    Looper.getMainLooper()
+                )
+            } catch (e: SecurityException) {
+                android.util.Log.e("MapScreen", "SecurityException requesting location updates", e)
+            }
+
+            onDispose {
+                fusedLocationClient.removeLocationUpdates(locationCallback)
+            }
+        } else {
+            onDispose {}
+        }
+    }
 
     // Village Baseline GIS Data State
     val villageBaselineRepository = remember { com.example.data.village.VillageBaselineRepository(context) }
@@ -96,7 +172,6 @@ fun MapScreen(
         villageBaselineList = villageBaselineRepository.getAllVillages()
     }
 
-    var mapViewRef by remember { mutableStateOf<MapView?>(null) }
     var selectedHouse by remember { mutableStateOf<HouseSummary?>(null) }
     var selectedEvent by remember { mutableStateOf<PopulationEvent?>(null) }
     var showHouseholdSheet by remember { mutableStateOf(false) }
@@ -172,7 +247,6 @@ fun MapScreen(
     var showHouseholdPickerDialog by remember { mutableStateOf(false) }
     var showUnpinnedHousesSheet by remember { mutableStateOf(false) }
     var houseToClearLocation by remember { mutableStateOf<HouseSummary?>(null) }
-    var currentUserLocation by remember { mutableStateOf<GeoPoint?>(null) }
     var showAddHouseholdDialog by remember { mutableStateOf(false) }
 
     // Advanced GIS Field Assistance States
@@ -641,14 +715,32 @@ fun MapScreen(
                         mapView.overlays.add(pendingMarker)
                     }
 
-                    // Add current user location blue marker if available
+                    // Add current user location blue marker and GPS accuracy radius overlay
                     currentUserLocation?.let { loc ->
+                        realtimeLocationInfo?.let { info ->
+                            if (info.accuracy > 0f) {
+                                val accuracyCircle = org.osmdroid.views.overlay.Polygon().apply {
+                                    points = createCirclePolygonPoints(loc, info.accuracy.toDouble())
+                                    fillPaint.color = android.graphics.Color.argb(35, 37, 99, 235)
+                                    outlinePaint.color = android.graphics.Color.argb(120, 37, 99, 235)
+                                    outlinePaint.strokeWidth = 2.5f
+                                }
+                                mapView.overlays.add(accuracyCircle)
+                            }
+                        }
+
                         val userMarker = Marker(mapView).apply {
                             position = loc
-                            title = "ตำแหน่งของคุณ"
-                            snippet = "พิกัดปัจจุบันจาก GPS"
+                            title = "ตำแหน่งของคุณ (GPS สด)"
+                            snippet = realtimeLocationInfo?.let {
+                                "พิกัด: ${String.format(java.util.Locale.US, "%.6f", it.latitude)}, ${String.format(java.util.Locale.US, "%.6f", it.longitude)}\nความแม่นยำ: ±${String.format(java.util.Locale.US, "%.1f", it.accuracy)} ม."
+                            } ?: "พิกัดปัจจุบันจาก GPS"
                             icon = createUserLocationMarkerDrawable(context)
                             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+                            setOnMarkerClickListener { _, _ ->
+                                showRealtimeHud = true
+                                true
+                            }
                         }
                         mapView.overlays.add(userMarker)
                     }
@@ -1240,36 +1332,45 @@ fun MapScreen(
                     )
                 }
 
-                // My GPS Location FAB
+                // Real-time GPS Tracking Toggle FAB
                 FloatingActionButton(
                     onClick = {
-                        if (locationPermissionState.status.isGranted) {
-                            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
-                                if (location != null) {
-                                    val userPoint = GeoPoint(location.latitude, location.longitude)
-                                    currentUserLocation = userPoint
-                                    mapViewRef?.controller?.animateTo(userPoint)
-                                    mapViewRef?.controller?.setZoom(17.0)
-                                    Toast.makeText(context, "ย้ายไปยังตำแหน่งปัจจุบันของคุณ", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    Toast.makeText(context, "ไม่พบตำแหน่ง GPS ปัจจุบัน", Toast.LENGTH_SHORT).show()
-                                }
-                            }.addOnFailureListener {
-                                Toast.makeText(context, "เกิดข้อผิดพลาดในการดึง GPS", Toast.LENGTH_SHORT).show()
-                            }
+                        if (!hasLocationPermission) {
+                            locationPermissionsState.launchMultiplePermissionRequest()
                         } else {
-                            locationPermissionState.launchPermissionRequest()
+                            isRealtimeTrackingActive = !isRealtimeTrackingActive
+                            if (isRealtimeTrackingActive) {
+                                showRealtimeHud = true
+                                Toast.makeText(context, "เปิดระบบติดตามตำแหน่งพิกัดสด (Real-time GPS)", Toast.LENGTH_SHORT).show()
+                                fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                                    if (loc != null) {
+                                        val pt = GeoPoint(loc.latitude, loc.longitude)
+                                        currentUserLocation = pt
+                                        realtimeLocationInfo = RealtimeLocationDetails(
+                                            latitude = loc.latitude,
+                                            longitude = loc.longitude,
+                                            accuracy = loc.accuracy,
+                                            altitude = if (loc.hasAltitude()) loc.altitude else null,
+                                            speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null,
+                                            bearing = if (loc.hasBearing()) loc.bearing else null
+                                        )
+                                        mapViewRef?.controller?.animateTo(pt)
+                                    }
+                                }
+                            } else {
+                                Toast.makeText(context, "ปิดระบบติดตามพิกัดสด", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     },
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = Color(0xFF2563EB),
+                    containerColor = if (isRealtimeTrackingActive) Color(0xFF2563EB) else MaterialTheme.colorScheme.surface,
+                    contentColor = if (isRealtimeTrackingActive) Color.White else Color(0xFF2563EB),
                     shape = CircleShape,
-                    modifier = Modifier.size(44.dp).shadow(4.dp, CircleShape)
+                    modifier = Modifier.size(46.dp).shadow(6.dp, CircleShape)
                 ) {
                     Icon(
-                        Icons.Filled.MyLocation,
-                        contentDescription = "ตำแหน่งปัจจุบันของฉัน",
-                        modifier = Modifier.size(20.dp)
+                        if (isRealtimeTrackingActive) Icons.Filled.GpsFixed else Icons.Filled.GpsNotFixed,
+                        contentDescription = "เปิด/ปิด การติดตามตำแหน่งสด",
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
@@ -1299,7 +1400,7 @@ fun MapScreen(
                 if (isPinningMode) {
                     FloatingActionButton(
                         onClick = {
-                            if (locationPermissionState.status.isGranted) {
+                            if (hasLocationPermission) {
                                 coroutineScope.launch {
                                     try {
                                         @SuppressLint("MissingPermission")
@@ -1320,7 +1421,7 @@ fun MapScreen(
                                     }
                                 }
                             } else {
-                                locationPermissionState.launchPermissionRequest()
+                                locationPermissionsState.launchMultiplePermissionRequest()
                             }
                         },
                         containerColor = Color(0xFFEA580C),
@@ -1332,33 +1433,47 @@ fun MapScreen(
                     }
                 }
 
-                // My Location
+                // Center on My Location / Toggle Real-time Coordinates HUD
                 FloatingActionButton(
                     onClick = {
-                        if (locationPermissionState.status.isGranted) {
-                            coroutineScope.launch {
-                                try {
-                                    Toast.makeText(context, "กำลังค้นหาตำแหน่งของคุณ...", Toast.LENGTH_SHORT).show()
-                                    @SuppressLint("MissingPermission")
-                                    val locationRequest = com.google.android.gms.location.CurrentLocationRequest.Builder()
-                                        .setPriority(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY)
-                                        .build()
-                                    @SuppressLint("MissingPermission")
-                                    val location = fusedLocationClient.getCurrentLocation(locationRequest, null).await()
-                                    if (location != null) {
-                                        val geoPoint = GeoPoint(location.latitude, location.longitude)
-                                        mapViewRef?.controller?.animateTo(geoPoint)
-                                        mapViewRef?.controller?.setZoom(17.0)
-                                        Toast.makeText(context, "ย้ายไปยังตำแหน่งปัจจุบันแล้ว", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        Toast.makeText(context, "ไม่พบตำแหน่งปัจจุบัน", Toast.LENGTH_SHORT).show()
+                        if (hasLocationPermission) {
+                            showRealtimeHud = !showRealtimeHud
+                            if (currentUserLocation != null) {
+                                mapViewRef?.controller?.animateTo(currentUserLocation)
+                                mapViewRef?.controller?.setZoom(17.5)
+                            } else {
+                                coroutineScope.launch {
+                                    try {
+                                        Toast.makeText(context, "กำลังค้นหาตำแหน่งของคุณ...", Toast.LENGTH_SHORT).show()
+                                        @SuppressLint("MissingPermission")
+                                        val req = com.google.android.gms.location.CurrentLocationRequest.Builder()
+                                            .setPriority(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY)
+                                            .build()
+                                        @SuppressLint("MissingPermission")
+                                        val loc = fusedLocationClient.getCurrentLocation(req, null).await()
+                                        if (loc != null) {
+                                            val pt = GeoPoint(loc.latitude, loc.longitude)
+                                            currentUserLocation = pt
+                                            realtimeLocationInfo = RealtimeLocationDetails(
+                                                latitude = loc.latitude,
+                                                longitude = loc.longitude,
+                                                accuracy = loc.accuracy,
+                                                altitude = if (loc.hasAltitude()) loc.altitude else null,
+                                                speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null,
+                                                bearing = if (loc.hasBearing()) loc.bearing else null
+                                            )
+                                            mapViewRef?.controller?.animateTo(pt)
+                                            mapViewRef?.controller?.setZoom(17.5)
+                                        } else {
+                                            Toast.makeText(context, "ไม่พบตำแหน่งปัจจุบัน", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "เกิดข้อผิดพลาดในการดึงพิกัด: ${e.message}", Toast.LENGTH_SHORT).show()
                                     }
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "เกิดข้อผิดพลาดในการดึงพิกัด: ${e.message}", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         } else {
-                            locationPermissionState.launchPermissionRequest()
+                            locationPermissionsState.launchMultiplePermissionRequest()
                         }
                     },
                     containerColor = EmeraldPrimary,
@@ -1366,7 +1481,7 @@ fun MapScreen(
                     shape = CircleShape,
                     modifier = Modifier.size(52.dp).shadow(6.dp, CircleShape)
                 ) {
-                    Icon(Icons.Filled.MyLocation, contentDescription = "ตำแหน่งของฉัน")
+                    Icon(Icons.Filled.MyLocation, contentDescription = "ตำแหน่งของฉันและพิกัดสด")
                 }
             }
 
@@ -1591,6 +1706,126 @@ fun MapScreen(
                     onCancelRoute = {
                         visitRouteState = FieldVisitRouteState()
                         if (activeGisTool == GisActiveTool.VISIT_ROUTE) activeGisTool = GisActiveTool.NONE
+                    }
+                )
+            }
+
+            // Real-time GPS Tracking status pill (Top center under search bar)
+            AnimatedVisibility(
+                visible = isRealtimeTrackingActive,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 118.dp)
+            ) {
+                Surface(
+                    onClick = { showRealtimeHud = !showRealtimeHud },
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF0F172A).copy(alpha = 0.92f),
+                    border = BorderStroke(1.dp, Color(0xFF3B82F6).copy(alpha = 0.6f)),
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF10B981))
+                        )
+                        Text(
+                            text = realtimeLocationInfo?.let {
+                                "GPS สด: ${String.format(java.util.Locale.US, "%.5f", it.latitude)}, ${String.format(java.util.Locale.US, "%.5f", it.longitude)} (±${it.accuracy.toInt()}ม.)"
+                            } ?: "GPS: กำลังจับสัญญาณดาวเทียม...",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color.White
+                        )
+                        Icon(
+                            if (showRealtimeHud) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            // Real-time GPS Telemetry HUD Card (Bottom center)
+            AnimatedVisibility(
+                visible = (showRealtimeHud || isRealtimeTrackingActive) &&
+                        !isPinningMode &&
+                        !showHouseholdSheet &&
+                        selectedEvent == null &&
+                        activeGisTool == GisActiveTool.NONE,
+                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp, vertical = 16.dp)
+            ) {
+                RealtimeGpsHudCard(
+                    locationInfo = realtimeLocationInfo,
+                    isTrackingActive = isRealtimeTrackingActive,
+                    isAutoFollow = isAutoFollowUser,
+                    onToggleTracking = {
+                        if (!hasLocationPermission) {
+                            locationPermissionsState.launchMultiplePermissionRequest()
+                        } else {
+                            isRealtimeTrackingActive = !isRealtimeTrackingActive
+                            if (isRealtimeTrackingActive) {
+                                showRealtimeHud = true
+                                Toast.makeText(context, "เปิดระบบติดตามตำแหน่งพิกัดสด (Real-time GPS)", Toast.LENGTH_SHORT).show()
+                                fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+                                    if (loc != null) {
+                                        val pt = GeoPoint(loc.latitude, loc.longitude)
+                                        currentUserLocation = pt
+                                        realtimeLocationInfo = RealtimeLocationDetails(
+                                            latitude = loc.latitude,
+                                            longitude = loc.longitude,
+                                            accuracy = loc.accuracy,
+                                            altitude = if (loc.hasAltitude()) loc.altitude else null,
+                                            speedKmh = if (loc.hasSpeed()) loc.speed * 3.6f else null,
+                                            bearing = if (loc.hasBearing()) loc.bearing else null
+                                        )
+                                        mapViewRef?.controller?.animateTo(pt)
+                                    }
+                                }
+                            } else {
+                                Toast.makeText(context, "ปิดระบบติดตามพิกัดสด", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onToggleAutoFollow = {
+                        isAutoFollowUser = !isAutoFollowUser
+                        if (isAutoFollowUser) {
+                            currentUserLocation?.let { mapViewRef?.controller?.animateTo(it) }
+                            Toast.makeText(context, "เปิดโหมดเลื่อนแผนที่ตามตำแหน่งอัตโนมัติ", Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, "ปิดโหมดเลื่อนตาม (เลื่อนแผนที่ได้อย่างอิสระ)", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onRecenter = {
+                        currentUserLocation?.let {
+                            mapViewRef?.controller?.animateTo(it)
+                            mapViewRef?.controller?.setZoom(17.5)
+                        }
+                    },
+                    onCopyCoordinates = { coords ->
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Coordinates", coords)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "คัดลอกพิกัด $coords แล้ว", Toast.LENGTH_SHORT).show()
+                    },
+                    onPinCurrentGps = { pt ->
+                        pendingPinLocation = pt
+                        isPinningMode = true
+                        mapViewRef?.controller?.animateTo(pt)
+                        Toast.makeText(context, "วางหมุดที่ตำแหน่ง GPS ปัจจุบันแล้ว", Toast.LENGTH_SHORT).show()
                     }
                 )
             }

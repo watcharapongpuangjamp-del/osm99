@@ -346,3 +346,286 @@ fun HouseholdDetailBottomSheet(
         }
     }
 }
+
+/**
+ * Modern real-time GPS telemetry and coordinate monitoring HUD card.
+ * Displays live latitude, longitude, accuracy radius, speed, altitude, and tracking controls.
+ */
+@Composable
+fun RealtimeGpsHudCard(
+    modifier: Modifier = Modifier,
+    locationInfo: RealtimeLocationDetails?,
+    isTrackingActive: Boolean,
+    isAutoFollow: Boolean,
+    onToggleTracking: () -> Unit,
+    onToggleAutoFollow: () -> Unit,
+    onRecenter: () -> Unit,
+    onCopyCoordinates: (String) -> Unit,
+    onPinCurrentGps: (GeoPoint) -> Unit
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .shadow(14.dp, RoundedCornerShape(22.dp), spotColor = CardShadowTint),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(
+            1.5.dp,
+            if (isTrackingActive) EmeraldPrimary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header Row: Status Indicator, Accuracy Pill, and Auto-Follow Mode
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(
+                                if (isTrackingActive) Color(0xFF10B981) else Color(0xFF9CA3AF)
+                            )
+                    )
+                    Text(
+                        if (isTrackingActive) "ติดตามตำแหน่งสด (GPS Real-time)" else "ระบบ GPS สแตนด์บาย",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isTrackingActive) EmeraldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (locationInfo != null) {
+                    val accuracy = locationInfo.accuracy
+                    val accuracyColor = when {
+                        accuracy <= 8f -> Color(0xFF10B981)
+                        accuracy <= 20f -> Color(0xFFF59E0B)
+                        else -> Color(0xFFEF4444)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = accuracyColor.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, accuracyColor.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = "±${String.format(java.util.Locale.US, "%.1f", accuracy)} ม.",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = accuracyColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            // Coordinates Display & Copy Button
+            if (locationInfo != null) {
+                val formattedCoords = "${String.format(java.util.Locale.US, "%.6f", locationInfo.latitude)}, ${String.format(java.util.Locale.US, "%.6f", locationInfo.longitude)}"
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                "พิกัดละติจูด, ลองจิจูด",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                formattedCoords,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { onCopyCoordinates(formattedCoords) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.ContentCopy,
+                                contentDescription = "คัดลอกพิกัด",
+                                tint = EmeraldPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Telemetry Details: Altitude, Speed, Bearing
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Altitude
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Filled.Height, contentDescription = null, tint = Color(0xFF6B7280), modifier = Modifier.size(14.dp))
+                            Text(
+                                locationInfo.altitude?.let { "${String.format(java.util.Locale.US, "%.1f", it)} ม." } ?: "ไม่ระบุ",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    // Speed
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Filled.Speed, contentDescription = null, tint = Color(0xFF6B7280), modifier = Modifier.size(14.dp))
+                            Text(
+                                locationInfo.speedKmh?.let { "${String.format(java.util.Locale.US, "%.1f", it)} กม./ชม." } ?: "0.0 กม./ชม.",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+
+                    // Bearing / Direction
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Filled.Explore, contentDescription = null, tint = Color(0xFF6B7280), modifier = Modifier.size(14.dp))
+                            Text(
+                                locationInfo.bearing?.let { "${it.toInt()}°" } ?: "0°",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    "กำลังรอสัญญาณระบุตำแหน่งจากดาวเทียม GPS...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // Controls & Quick Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Toggle Tracking Active / Inactive
+                Button(
+                    onClick = onToggleTracking,
+                    modifier = Modifier.weight(1.2f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isTrackingActive) Color(0xFFDC2626) else EmeraldPrimary
+                    ),
+                    contentPadding = PaddingValues(vertical = 10.dp)
+                ) {
+                    Icon(
+                        if (isTrackingActive) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isTrackingActive) "หยุดติดตาม" else "เริ่มติดตามสด", fontWeight = FontWeight.Bold)
+                }
+
+                // Toggle Auto-Follow User Center
+                OutlinedButton(
+                    onClick = onToggleAutoFollow,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = if (isAutoFollow) EmeraldPrimary else MaterialTheme.colorScheme.onSurface
+                    ),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isAutoFollow) EmeraldPrimary else MaterialTheme.colorScheme.outline
+                    ),
+                    contentPadding = PaddingValues(vertical = 10.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.Navigation,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = if (isAutoFollow) EmeraldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isAutoFollow) "ตามแผนที่" else "แผนที่อิสระ", style = MaterialTheme.typography.labelMedium)
+                }
+
+                // Pin Here button (if location is known)
+                if (locationInfo != null) {
+                    IconButton(
+                        onClick = { onPinCurrentGps(GeoPoint(locationInfo.latitude, locationInfo.longitude)) },
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFFEA580C).copy(alpha = 0.12f))
+                    ) {
+                        Icon(
+                            Icons.Filled.AddLocationAlt,
+                            contentDescription = "ปักหมุดครัวเรือน ณ พิกัดนี้",
+                            tint = Color(0xFFEA580C),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // Center Map on Current Location
+                if (locationInfo != null) {
+                    IconButton(
+                        onClick = onRecenter,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(EmeraldPrimary.copy(alpha = 0.12f))
+                    ) {
+                        Icon(
+                            Icons.Filled.MyLocation,
+                            contentDescription = "ย้ายไปตำแหน่งปัจจุบัน",
+                            tint = EmeraldPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+

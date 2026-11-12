@@ -86,3 +86,17 @@ val GOOGLE_HYBRID_TILE_SOURCE: ITileSource = object : OnlineTileSourceBase(
         return "https://mt1.google.com/vt/lyrs=y&x=$x&y=$y&z=$zoom"
     }
 }
+
+/**
+ * Data model storing real-time GPS telemetry from Google Play Services Location Provider.
+ */
+data class RealtimeLocationDetails(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracy: Float,
+    val altitude: Double? = null,
+    val speedKmh: Float? = null,
+    val bearing: Float? = null,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
